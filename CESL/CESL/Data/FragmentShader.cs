@@ -1,4 +1,5 @@
 ﻿using OpenTK.Mathematics;
+using System;
 
 namespace CESL.Data;
 
@@ -6,11 +7,14 @@ public struct FragmentShader
 {
     public string GLSL { get; set; }
 
+    public string Namespace { get; set; }
+    public string ClassName { get; set; }
+
     public List<ShaderField> Fields;
 
-    public readonly ShaderField FindFieldData(string name) => Fields.FirstOrDefault(f => f.Name == name);
+    public readonly ShaderField FindShaderField(string name) => Fields.FirstOrDefault(f => f.Name == name);
 
-    public static void SetUniform(CEShader shader, ShaderField field, object value)
+    public static void SetUniform(CEShader shader, ShaderField field, object value, int index = 0)
     {
         if (value == null)
             return;
@@ -37,6 +41,10 @@ public struct FragmentShader
                 break;
             case "mat4":
                 shader.SetMatrix4(field.Name, (Matrix4)value);
+                break;
+            case "sampler2D":
+                //((Texture2D)material.Values[field.name]).Bind(GetTextureUnit(index));
+                shader.SetInt(field.Name, index);
                 break;
         }
     }

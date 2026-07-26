@@ -1,6 +1,4 @@
-﻿using CESL.Attributes;
-
-namespace CESL.Data;
+﻿namespace CESL.Data;
 
 public struct ShaderField
 {
@@ -8,33 +6,21 @@ public struct ShaderField
 
     public string Type { get; internal set; }
 
-    public string? Attribute { get; internal set; }
-
-    public string? AttributeName { get; internal set; }
+    public List<FieldAttribute> Attributes { get; internal set; }
 
     public bool IsPrivate { get; internal set; }
 
-    public object GetAttribute()
+    public bool HasAttribute(string attributeName) => Attributes.Any(attr => attr.Name == attributeName);
+
+    public object GetAttribute(string attributeName)
     {
-        if (Attribute == null)
-            return null;
-
-        var attr = CESL.ParseAttribute(Attribute);
-
-        AttributeName = attr.name;
-
-        if (attr.name == "Range")
+        var attr = Attributes.FirstOrDefault(attr => attr.Name == attributeName);
+        if (attr.Line != null)
         {
-            var min = float.Parse(attr.args[0]);
-            var max = float.Parse(attr.args[1]);
-            var step = float.Parse(attr.args[2]);
-
-            var range = new RangeValue(min, max, step);
-
-            return range;
+            return attr.GetAttribute();
         }
         return null;
     }
 
-    public override readonly string ToString() => $"Name: {Name}, Type: {Type}, Attribute Name: {AttributeName??"null"}, IsPrivate: {IsPrivate}";
+    public override readonly string ToString() => $"Name: {Name}, Type: {Type}, Attributes: {Attributes.Count}, IsPrivate: {IsPrivate}";
 }

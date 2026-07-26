@@ -7,7 +7,7 @@ namespace CESL;
 public static class CESL
 {
     /// <summary>
-    /// Parses a CESL vertex shader source code and converts it to GLSL format, returning a VertexShader struct containing the GLSL code.
+    /// Parses a CESL vertex shader source code and converts it to GLSL format, returning a VertexShader struct containing the namespace, class name, and GLSL code.
     /// </summary>
     /// <param name="source">CESL vertex shader</param>
     /// <returns></returns>
@@ -15,11 +15,70 @@ public static class CESL
     {
         var vertex_data = new VertexShader();
 
-        var pattern = @"\b(public|private)\b";
+        var lines = source.Split('\n');
 
-        var replaced = Regex.Replace(source, pattern, "uniform");
+        List<string> output = [];
 
-        vertex_data.GLSL = replaced;
+        bool waitingForClassBrace = false;
+        int classBraceDepth = 0;
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+
+            bool doNotAddLine = false;
+
+            // check for namespace declaration
+            if (line.StartsWith("namespace"))
+            {
+                var nsSplit = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                vertex_data.Namespace = nsSplit[1].TrimEnd(';');
+                doNotAddLine = true;
+                continue;
+            }
+
+            // check for class declaration
+            if (line.StartsWith("class"))
+            {
+                var classSplit = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                vertex_data.ClassName = classSplit[1];
+                doNotAddLine = true;
+                waitingForClassBrace = true;
+                continue;
+            }
+
+            // check for first brace after class declaration
+            if (waitingForClassBrace && line == "{")
+            {
+                waitingForClassBrace = false;
+                classBraceDepth = 1;
+                continue;
+            }
+
+            // track brace depth
+            if (classBraceDepth > 0)
+            {
+                foreach (char c in line)
+                {
+                    if (c == '{')
+                        classBraceDepth++;
+                    else if (c == '}')
+                        classBraceDepth--;
+                }
+
+                // uninclude the last bracket
+                if (classBraceDepth == 0 && line == "}")
+                {
+                    doNotAddLine = true;
+                    continue;
+                }
+            }
+
+            if (!doNotAddLine)
+                output.Add(line);
+        }
+
+        vertex_data.GLSL = string.Join("\n", output);
 
         return vertex_data;
     }
@@ -41,27 +100,134 @@ public static class CESL
         List<string> output = [];
         List<string> pendingAttributes = [];
 
+        bool waitingForClassBrace = false;
+        int classBraceDepth = 0;
+
+        bool isInsideCommentBlock = false;
+        bool stillCheckComment = false;
+
+        // parse each line of the source code
         foreach (var rawLine in lines)
         {
             var line = rawLine.Trim();
 
-            var field = new ShaderField();
+            if (line.StartsWith("/*"))
+                isInsideCommentBlock = true;
+
+            if (line.Contains("/*") && !line.StartsWith("/*"))
+            {
+                stillCheckComment = true;
+                isInsideCommentBlock = true;
+            }
+
+            if (line.EndsWith("*/"))
+                isInsideCommentBlock = false;
+
+            if (isInsideCommentBlock && !stillCheckComment)
+            {
+                output.Add(line);
+                continue;
+            }
+
+            bool isComment = false;
+
+            if (line.StartsWith("//"))
+                isComment = true;
+
+            if (line.Contains("//") && !line.StartsWith("//"))
+            {
+                stillCheckComment = true;
+                isComment = true;
+            }
+
+            if (isComment && !stillCheckComment)
+            {
+                output.Add(line);
+
+                continue;
+            }
+
+            bool doNotAddLine = false;
+
+            // check for namespace declaration
+            if (line.StartsWith("namespace"))
+            {
+                var nsSplit = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                frag_data.Namespace = nsSplit[1].TrimEnd(';');
+                doNotAddLine = true;
+                stillCheckComment = false;
+                continue;
+            }
+
+            // check for class declaration
+            if (line.StartsWith("class"))
+            {
+                var classSplit = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                frag_data.ClassName = classSplit[1];
+                doNotAddLine = true;
+                waitingForClassBrace = true;
+                continue;
+            }
+
+            // check for first brace after class declaration
+            if (waitingForClassBrace && line == "{")
+            {
+                waitingForClassBrace = false;
+                classBraceDepth = 1;
+                continue;
+            }
+
+            // track brace depth
+            if (classBraceDepth > 0)
+            {
+                foreach (char c in line)
+                {
+                    if (c == '{')
+                        classBraceDepth++;
+                    else if (c == '}')
+                        classBraceDepth--;
+                }
+
+                // uninclude the last bracket
+                if (classBraceDepth == 0 && line == "}")
+                {
+                    doNotAddLine = true;
+                    continue;
+                }
+            }
 
             // checking for a attribute
             if (line.StartsWith('['))
             {
                 pendingAttributes.Add(line);
+
+                stillCheckComment = false;
+
                 continue;
             }
 
-            field.IsPrivate = line.Contains("private");
+            bool skipUniform = false;
+
+            // has to be done before its converted to uniform
+            var isPrivate = line.StartsWith("private");
+
+            // if it starts with uniform it wont contain public or private data
+            if (line.StartsWith("uniform"))
+                skipUniform = true;
 
             // convert the words public or private to uniform
             line = Regex.Replace(line, @"\b(public|private)\b", "uniform");
 
             // checking for a uniform
-            if (line.Contains("uniform"))
+            if (line.StartsWith("uniform") && !skipUniform)
             {
+                // changed this so it doesn't make a field for every line
+                var field = new ShaderField();
+
+                field.Attributes = [];
+
+                field.IsPrivate = isPrivate;
+
                 // process attributes before clearing
                 if (pendingAttributes.Count > 0)
                 {
@@ -69,7 +235,16 @@ public static class CESL
                     {
                         // glsl attribute indication
                         output.Add("// " + attr);
-                        field.Attribute = attr;
+
+                        // create the attribute
+                        var attribute = new FieldAttribute
+                        {
+                            Line = attr,
+                            Name = ParseAttribute(attr).name
+                        };
+
+                        // add the attribute to the field
+                        field.Attributes.Add(attribute);
                     }
 
                     pendingAttributes.Clear();
@@ -77,20 +252,35 @@ public static class CESL
 
                 output.Add(line);
 
-                var split = Regex.Split(line.Trim(), @"\s+|;");
+                var presplit = line;
 
+                if (isComment)
+                    presplit = line.Split("//")[0].Trim();
+
+                // splits the field into segments
+                var split = Regex.Split(presplit.Trim(), @"\s+|;");
+
+                // finds the type
                 field.Type = split[1];
 
-                //if (!field.noShow)
+                //if (!field.isPrivate)
                 //field.value = CreateInstance(split[1]);
 
+                // finds the name
                 field.Name = split[2];
 
+                // adds the field to the fragment data
                 frag_data.Fields.Add(field);
+
+                stillCheckComment = false;
+
                 continue;
             }
 
-            output.Add(line);
+            if (!doNotAddLine)
+                output.Add(line);
+
+            stillCheckComment = false;
         }
 
         frag_data.GLSL = string.Join("\n", output);
@@ -142,34 +332,50 @@ public static class CESL
         "int" => 0,
         "bool" => false,
         "string" => string.Empty,
+        "vec2" => new Vector2(0),
         "vec3" => new Vector3(0),
         _ => throw new ArgumentException($"Unsupported shader type: {shaderType}")
     };
 
     /// <summary>
-    /// Converts a GLSL vertex shader to CESL format with private_fields to specify what uniforms should be private.
+    /// Converts a GLSL vertex shader to CESL format with new support for namespace and class declaration.
     /// </summary>
     /// <param name="glsl_source">glsl vertex source</param>
-    /// <param name="private_fields">uniforms that should be private</param>
     /// <returns></returns>
-    public static string ToCESLVertexShader(string glsl_source, params string[] private_fields)
+    public static string ToCESLVertexShader(string glsl_source)
     {
         var lines = glsl_source.Split('\n');
         List<string> output = [];
 
+        bool addedNamespaceAndClass = false;
+
         foreach (var rawLine in lines)
         {
             var line = rawLine.Trim();
-            if (line.StartsWith("uniform"))
+
+            var isLastLine = Array.IndexOf(lines, rawLine) == lines.Length - 1;
+
+            if (!isLastLine && !addedNamespaceAndClass)
             {
-                var split = Regex.Split(line.Trim(), @"\s+|;");
-                var type = split[1];
-                var name = split[2];
-                var accessModifier = private_fields.Contains(name) ? "private" : "public";
-                output.Add($"{accessModifier} {type} {name};");
+                var nextLine = lines[Array.IndexOf(lines, rawLine) + 1].Trim();
+
+                if (nextLine.StartsWith("uniform"))
+                {
+                    var nameclass = @"namespace CESLNamespace;
+
+class CESLVertex
+{";
+
+                    output.Add(nameclass);
+
+                    addedNamespaceAndClass = true;
+                }
             }
-            else 
-                output.Add(line);
+
+            output.Add(line);
+
+            if (isLastLine)
+                output.Add("}");
         }
 
         return string.Join("\n", output);
